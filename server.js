@@ -7,6 +7,7 @@ const host_id = parseInt(process.argv[3]);
 const fs = require('fs');
 host_addr = -1;
 host_port = -1;
+// TEST
 
 function readEnvFile() {
   // const peers = [];
