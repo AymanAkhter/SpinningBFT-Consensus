@@ -7,19 +7,14 @@ const host_id = parseInt(process.argv[3]);
 const fs = require('fs');
 host_addr = -1;
 host_port = -1;
-// TEST
 
 function readEnvFile() {
-  // const peers = [];
   
   try {
-    // Read the contents of the .env file
     const data = fs.readFileSync(envFilePath, 'utf8');
     
-    // Split the contents into lines
     const lines = data.split('\n');
     
-    // Parse each line and extract peer information
     lines.forEach(line => {
       const [type, id, host, port] = line.trim().split(',').map(item => item.trim());
       if (type && id && host && port) {
@@ -35,24 +30,66 @@ function readEnvFile() {
   } catch (err) {
     console.error('Error reading .env file:', err.message);
   }
-  
-  // return peers;
 }
 
-// const port = parseInt(process.argv[2]);
-// const peers = process.argv.slice(3).map(peer => ({ host: 'localhost', port: parseInt(peer) }));
-
-// const peers = getPeersList()
 readEnvFile();
+console.log(peers);
 
 const server = net.createServer(socket => {
   console.log('New connection from ' + socket.remoteAddress + ':' + socket.remotePort);
-  // Store the newly connected socket
   connectToPeers();
-  connections[socket.remoteAddress + ':' + socket.remotePort] = socket;
 
   socket.on('data', data => {
     console.log('Received data from ' + socket.remoteAddress + ':' + socket.remotePort + ': ' + data.toString());
+    const msg_tuple = JSON.parse(data);
+    const msg_type = msg_tuple[0];
+
+    if(msg_type=='REQUEST'){
+        send_tuple = ['PRE-PREPARE', msg_tuple[1], msg_tuple[2], msg_tuple[3]];
+        json_data = JSON.stringify(send_tuple);
+        Object.values(connections).forEach(connection => {
+          const socket = connection[0];
+          const peer = connection[1];
+          if(peer.type=='Server'){
+            socket.write(json_data);
+          }
+        });
+    }
+    if(msg_type=='PRE-PREPARE'){
+        send_tuple = ['PREPARE', msg_tuple[1], msg_tuple[2], msg_tuple[3]];
+        json_data = JSON.stringify(send_tuple);
+        Object.values(connections).forEach(connection => {
+          const socket = connection[0];
+          const peer = connection[1];
+          if(peer.type=='Server'){
+            socket.write(json_data);
+          }
+        });
+    }
+    if(msg_type=='PREPARE'){
+        send_tuple = ['COMMIT', msg_tuple[1], msg_tuple[2], msg_tuple[3]];
+        json_data = JSON.stringify(send_tuple);
+        Object.values(connections).forEach(connection => {
+          const socket = connection[0];
+          const peer = connection[1];
+          if(peer.type=='Server'){
+            socket.write(json_data);
+          }
+        });
+    }
+    if(msg_type=='COMMIT'){
+        send_tuple = ['REPLY', msg_tuple[1], msg_tuple[2], msg_tuple[3]];
+        json_data = JSON.stringify(send_tuple);
+        Object.values(connections).forEach(connection => {
+          const socket = connection[0];
+          const peer = connection[1];
+          if(peer.type=='Client' && peer.id==msg_tuple[1]){
+            console.log('RELELELELELELELELL');
+            socket.write(json_data);
+          }
+        });
+    }
+    
   });
 
   socket.on('close', () => {
@@ -81,11 +118,7 @@ function connectToPeers() {
     if(connections[peer.host+':'+peer.port]===undefined){
     const client = net.createConnection({ port: peer.port, host: peer.host }, () => {
       console.log('Connected to peer ' + peer.host + ':' + peer.port);
-      connections[peer.host + ':' + peer.port] = client;
-      
-    //   client.on('data', data => {
-    //     console.log('Received data from ' + peer.host + ':' + peer.port + ': ' + data.toString());
-    //   });
+      connections[peer.host + ':' + peer.port] = [client,peer];
     });
     client.on('error', err => {
       console.error('Error connecting to ' + peer.host + ':' + peer.port + ': ' + err.message);
@@ -94,23 +127,24 @@ function connectToPeers() {
 });
 }
 
-// Create readline interface
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
+// // Create readline interface
+// const rl = readline.createInterface({
+//   input: process.stdin,
+//   output: process.stdout
+// });
 
-// Prompt user for input
-rl.setPrompt('Enter message: ');
+// // Prompt user for input
+// rl.setPrompt('Enter message: ');
 
-// Listen for user input
-rl.on('line', input => {
-  // Send input to all connected peers
-  Object.values(connections).forEach(client => {
-    client.write(input);
-  });
+// // Listen for user input
+// rl.on('line', input => {
+//   // Send input to all connected peers
+//   Object.values(connections).forEach(client => {
+    
+//     client.write(input);
+//   });
 
-  rl.prompt();
-});
+//   rl.prompt();
+// });
 
-rl.prompt();
+// rl.prompt();

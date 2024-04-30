@@ -35,20 +35,14 @@ function readEnvFile() {
     console.error('Error reading .env file:', err.message);
   }
   
-  // return peers;
 }
 
-// const port = parseInt(process.argv[2]);
-// const peers = process.argv.slice(3).map(peer => ({ host: 'localhost', port: parseInt(peer) }));
-
-// const peers = getPeersList()
 readEnvFile();
 
 const server = net.createServer(socket => {
   console.log('New connection from ' + socket.remoteAddress + ':' + socket.remotePort);
   // Store the newly connected socket
   connectToPeers();
-  connections[socket.remoteAddress + ':' + socket.remotePort] = socket;
 
   socket.on('data', data => {
     console.log('Received data from ' + socket.remoteAddress + ':' + socket.remotePort + ': ' + data.toString());
@@ -80,11 +74,7 @@ function connectToPeers() {
     if(connections[peer.host+':'+peer.port]===undefined){
     const client = net.createConnection({ port: peer.port, host: peer.host }, () => {
       console.log('Connected to peer ' + peer.host + ':' + peer.port);
-      connections[peer.host + ':' + peer.port] = client;
-      
-    //   client.on('data', data => {
-    //     console.log('Received data from ' + peer.host + ':' + peer.port + ': ' + data.toString());
-    //   });
+      connections[peer.host + ':' + peer.port] = [client,peer];
     });
     client.on('error', err => {
       console.error('Error connecting to ' + peer.host + ':' + peer.port + ': ' + err.message);
@@ -99,16 +89,20 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 
+var seq = 0;
+
 // Prompt user for input
 rl.setPrompt('Enter message: ');
 
 // Listen for user input
 rl.on('line', input => {
-  // Send input to all connected peers
-  Object.values(connections).forEach(client => {
-    client.write(input);
+  Object.values(connections).forEach(connection => {
+    const msg_tuple = ['REQUEST', host_id, seq, input]
+    const json_data = JSON.stringify(msg_tuple);
+    const client = connection[0];
+    (client).write(json_data);
   });
-
+  seq++;
   rl.prompt();
 });
 
