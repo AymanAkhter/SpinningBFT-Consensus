@@ -7,9 +7,9 @@ const host_id = parseInt(process.argv[3]);
 const fs = require('fs');
 host_addr = -1;
 host_port = -1;
-my_view = 1;
+my_view = 0;
 m_last = 0;
-v_last = 0;
+v_last = -1;
 unordered = [];
 pending = {};
 processing = [];
@@ -18,12 +18,18 @@ isPrepared = false;
 isPrePrepared = false;
 prepared_count = 0;
 commit_count = 0;
-f = 1;
+f = 0;
 merge_count = 0;
 prepared_request_digest = null;
 commit_sent = false;
 reply_sent = false;
 isPrimary = false;
+
+function sleepSync(ms) {
+  const start = Date.now();
+  while (Date.now() - start < ms) {}
+}
+
 
 function startTimer (){
 
@@ -62,11 +68,18 @@ function readEnvFile() {
 
 readEnvFile();
 console.log(peers);
+if(my_view==host_id){
+  isPrimary=true;
+}
+
+// self_connection = [net.createConnection({port : host_port, host: host_addr}),{ type : 'Server', id: host_id, host_addr, port : host_port }]
 
 function sendPrePrepare(){
   if((my_view-1 == v_last) && (state=='normal') && isPrePrepared==false){
     // Need to check for empty list condition 
     // UPDATE: (Ok i fixed something so it shouldnt happen)
+
+    console.log("In sendPrepPrepare");
     dm = unordered[0];
     unordered.shift();
     send_tuple = ['PRE-PREPARE', host_id, my_view, dm];
@@ -92,10 +105,12 @@ const server = net.createServer(socket => {
     const msg_type = msg_tuple[0];
 
     if(msg_type=='REQUEST'){
-      console.log("Received REQUEST " + msg_tuple);
+      // console.log("Received REQUEST " + msg_tuple);
       // TODO : Crytpo check!
+      console.log("In Request");
       unordered.push(msg_tuple);
       if(unordered.length==1 && isPrimary==true){
+        console.log("In Request - In IF block")
         sendPrePrepare();
       }
       // Make sure timer is not started multiple times
@@ -104,7 +119,7 @@ const server = net.createServer(socket => {
     }
 
     if(msg_type=='PRE-PREPARE'){
-      console.log("Received PRE-PREPARE " + msg_tuple);
+      // console.log("Received PRE-PREPARE " + msg_tuple);
       // Check validity of PRE-PREPARE message
       if(msg_tuple[2]==my_view && my_view-1 == v_last && isPrepared==false && state == 'normal'){
         // Send PREPARE to all servers
@@ -126,7 +141,7 @@ const server = net.createServer(socket => {
     }
 
     if(msg_type=='PREPARE'){
-      console.log("Received PREPARE " + msg_tuple);
+      // console.log("Received PREPARE " + msg_tuple);
       // PREPARE message validity check
       if(msg_tuple[2]==my_view){ //Removed the second condition, check once
         prepared_count++;
@@ -134,6 +149,7 @@ const server = net.createServer(socket => {
           if(state=='normal'){
             send_tuple = ['COMMIT', host_id, my_view];
             json_data = JSON.stringify(send_tuple);
+            sleepSync(5000);
             Object.values(connections).forEach(connection => {
               const socket = connection[0];
               const peer = connection[1];
@@ -151,7 +167,7 @@ const server = net.createServer(socket => {
     // If replied, and isPrimary and unordered in non empty, then sendPreprepare
 
     if(msg_type=='COMMIT'){
-      console.log("Received COMMIT " + msg_tuple);
+      // console.log("Received COMMIT " + msg_tuple);
       if(msg_tuple[2]==my_view){
         commit_count++;
         if(commit_count >= 2*f+1 && reply_sent==false){
@@ -193,7 +209,7 @@ const server = net.createServer(socket => {
           else{
             // merge stuff
           }
-          v_last = v;
+          v_last = my_view;
           // some blacklist shit after this
 
           // reset variables
