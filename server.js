@@ -13,31 +13,65 @@ m_last = 0;
 v_last = -1;
 unordered = [];
 pending = {};
-processing = [];
+processing = new Map();
 state = 'normal';
 isPrepared = false;
 isPrePrepared = false;
 prepared_count = 0;
 commit_count = 0;
 f = 0;
+n = 3;
 merge_count = 0;
 prepared_request_digest = null;
 commit_sent = false;
 reply_sent = false;
 isPrimary = false;
+blacklist = [];
+merge_list = []
+
+
 let buffer = '';
 function sleepSync(ms) {
   const start = Date.now();
   while (Date.now() - start < ms) {}
 }
 
+const delayMS = 15000; // Delay in ms
+const timer = setTimeout(expireTimer, delayMS);
+clearTimeout(timer);
+// Processing is a map from {[<REQUEST, c, seq, op>, view_of_request] -> list of PREPARE messages corresponding to this request and view}
 
 function startTimer (){
-
+  timer = setTimeout(expireTimer, delayMS);
 }
 
 function stopTimer (){
+  clearTimeout(timer);
+}
 
+function restartTimer(){
+  timer(expireTimer, delayMS);
+}
+
+function expireTimer(){
+  my_P = null;
+  view_num = my_view; // This is the view number we will send in MERGE message
+  for(const [key, value] in processing)
+  {
+    if(value.length>=2*f+1 && key[1]>=(v_last-n))
+    {
+      my_P = value;
+    }
+    if(state=='normal' && prepared_count>=f+1) // Is check for f+1 PRE-PREPARED really necessary doe?
+    {
+      view_num = my_view+1;
+    }
+  }
+  state = 'merge';
+  isPrepared = false;
+  isPrePrepared = false;
+  my_view++;
+  restartTimer();
 }
 
 function exec(request){
@@ -96,6 +130,45 @@ function sendPrePrepare(){
   }
 }
 
+function sendPrePrepareMerge(){
+  v_max = -1;
+  VP = new Map();
+  for(let i=0; i<merge_list.length; i++)
+  {
+    for(let j=0; j<(merge_list[i][3].length); j++)
+    {
+      if(merge_list[i][3][j][2] > v_max)
+      {
+        v_max = merge_list[i][3][j][2];
+      }
+    }
+  }
+  v_min = v_max-n;
+  for(let i=0; i<(merge_list.length); i++)
+  {
+    MERGE = merge_list[i];
+    MERGE.P = MERGE[3];
+    VP.set(MERGE.P[0][2], MERGE.P[0][3]);
+  }
+  send_tuple = ['PRE-PREPARE-MERGE', host_id, my_view, VP, merge_list];
+  json_data = JSON.stringify(send_tuple);
+  Object.values(connections).forEach(connection => {
+    const socket = connection[0];
+    const peer = connection[1];
+    if(peer.type=='Server'){
+      flag_sent = flag_sent && socket.write(json_data + '\0');
+    }
+  });
+  if(flag_sent)
+  {
+    console.error(`Server ${host_id} SENT PRE-PREPARE-MERGE to all`);
+  }
+  else
+  {
+    console.error(`Server ${host_id} couldn't SEND PRE-PREPARE-MERGE to all`); 
+  }
+}
+
 const server = net.createServer(socket => {
   console.log('New connection from ' + socket.remoteAddress + ':' + socket.remotePort);
   connectToPeers();
@@ -151,7 +224,15 @@ const server = net.createServer(socket => {
         }
 
         // Augement processing, set isPrepared
-        processing.push(['PRE-PREPARE', host_id, my_view, msg_tuple[3]]);
+        // Store PRE-PREPARE messages in processing map
+        if(processing.has([JSON.stringify(msg_tuple[3]), msg_tuple[2]]))
+        {
+          ;
+        }
+        else
+        {
+          processing.set([JSON.stringify(msg_tuple[3]), msg_tuple[2]], [ ]);
+        }
         isPrepared = true;
         prepared_count++;
       }
@@ -162,6 +243,14 @@ const server = net.createServer(socket => {
       // PREPARE message validity check
       if(msg_tuple[2]==my_view){ //Removed the second condition, check once
         prepared_count++;
+        for(const [key, value] of processing)
+        {
+          if(key[1]==my_view && JSON.stringify(key[0][3])==JSON.stringify(msg_tuple[3]))
+          {
+            value.push(msg_tuple);
+            break;
+          }
+        }
         if(prepared_count >= (2*f+1) && commit_sent==false){
           if(state=='normal'){
             send_tuple = ['COMMIT', host_id, my_view];
@@ -201,11 +290,7 @@ const server = net.createServer(socket => {
             stopTimer();
           }
           request = null;
-          for(i=0; i<processing.length; i++){
-            if(processing[i][2]==my_view){
-              request = processing[i];
-            }
-          }
+          for(const [key, value] of processing)
 
           if(request!=null){
             reply = exec(request);
@@ -231,7 +316,7 @@ const server = net.createServer(socket => {
             if(remove_index!=-1){
               unordered.splice(remove_index,1);
             }
-            else if(length(unordered)!=0){
+            else if((unordered.length)!=0){
               console.log("REQUEST DOES NOT EXIST");
             }
           }
@@ -239,21 +324,25 @@ const server = net.createServer(socket => {
             // merge stuff
           }
           v_last = my_view;
-          // some blacklist shit after this
-
-          // reset variables
+          
           isPrepared=false;
           isPrePrepared=false;
           prepared_count = 0;
           commit_count = 0;
           commit_sent = false;
           reply_sent = false;
-          
           my_view++;
-          if(my_view==host_id){
+          while(blacklist.includes((my_view)%n))
+          {
+            my_view++;
+          }
+          if((my_view%n)==host_id){
             isPrimary=true;
 
-
+            if(merge_count>=2*f+1)
+            {
+              sendPrePrepareMerge();
+            }
             if(unordered.length!=0){
               sendPrePrepare();
             }
@@ -264,7 +353,89 @@ const server = net.createServer(socket => {
         }
       }
     }
+
+    if(msg_type=='MERGE'){
+      if(msg_tuple[2] >= v_last)
+      {
+        merge_count++;
+        if(merge_count >= 2*f+1)
+        {
+          state = 'merge';
+          isPrePrepared = false;
+          isPrepared = false;
+          for (const [key, value] of processing) {
+            if (value.length >= 2 * f + 1 && key[1] >= v_last - n) {
+                myP = value;
+                send_tuple = ['MERGE', host_id, my_view, myP];
+                json_data = JSON.stringify(send_tuple);
+                let flag_sent = true; // Initialize flag_sent here
+                Object.values(connections).forEach(connection => {
+                    const socket = connection[0];
+                    const peer = connection[1];
+                    if (peer.type === 'Server') {
+                        flag_sent = flag_sent && socket.write(json_data + '\0');
+                    }
+                });
+                if (flag_sent) {
+                    console.error(`Server ${host_id} SENT MERGE to all`);
+                } else {
+                    console.error(`Server ${host_id} couldn't SEND MERGE to all`);
+                }
+                break; // Break out of the loop after sending MERGE
+            }
+          }        
+        }
+      }
+    }
     
+    if(msg_tuple=='PRE-PREPARE-MERGE')
+    {
+      if(isPrePrepared==false && v >= v_last)
+      {
+        v_min = my_view+100;
+        for(let i=0; i<(msg_tuple[4].length); i++)
+        {
+          if(msg_tuple[4][i][2]<v_min)
+          {
+            v_min = msg_tuple[4][i][2];
+          }
+        }
+        if(v_last+1 >= v_min)
+        {
+          my_view = msg_tuple[2];
+          dm = msg_tuple[3];
+          isPrepared = true;
+          state = 'normal';
+          if(m_last < v_last)
+          {
+            if(blacklist.length==f)
+            {
+              blacklist.shift();
+            }
+            blacklist.push((my_view-1)%n);
+          }
+          else
+          {
+            blacklist[blacklist.length-1] = (my_view-1)%n;
+          }
+          m_last = my_view;
+          send_tuple = ['PREPARE', host_id, my_view, dm];
+          json_data = JSON.stringify(send_tuple);
+          Object.values(connections).forEach(connection => {
+            const socket = connection[0];
+            const peer = connection[1];
+            if(peer.type=='Server'){
+              flag_sent = flag_sent && socket.write(json_data + '\0');
+            }
+          });
+        }
+        else
+        {
+          // StateTransfer()
+        }
+      }
+    }
+
   });
 
   socket.on('close', () => {
