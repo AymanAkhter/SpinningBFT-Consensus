@@ -89,7 +89,7 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 
-var seq = 0;
+var seq = 1;
 
 // Prompt user for input
 rl.setPrompt('Enter message: ');

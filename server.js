@@ -1,4 +1,5 @@
 const net = require('net');
+const http = require('http');
 const readline = require('readline');
 const envFilePath = './hosts.env';
 const peers = [];
@@ -24,7 +25,7 @@ prepared_request_digest = null;
 commit_sent = false;
 reply_sent = false;
 isPrimary = false;
-
+let buffer = '';
 function sleepSync(ms) {
   const start = Date.now();
   while (Date.now() - start < ms) {}
@@ -88,7 +89,7 @@ function sendPrePrepare(){
       const socket = connection[0];
       const peer = connection[1];
       if(peer.type=='Server'){
-        socket.write(json_data);
+        socket.write(json_data + '\0');
       }
     });
     isPrePrepared = true;
@@ -100,6 +101,13 @@ const server = net.createServer(socket => {
   connectToPeers();
 
   socket.on('data', data => {
+    buffer += data.toString();
+    const delimIndex = buffer.indexOf('\0');
+    if(delimIndex!==-1)
+    {
+      data = buffer.substring(0, delimIndex);
+    }
+    buffer = '';
     console.log('Received data from ' + socket.remoteAddress + ':' + socket.remotePort + ': ' + data.toString());
     const msg_tuple = JSON.parse(data);
     const msg_type = msg_tuple[0];
@@ -110,7 +118,7 @@ const server = net.createServer(socket => {
       console.log("In Request");
       unordered.push(msg_tuple);
       if(unordered.length==1 && isPrimary==true){
-        console.log("In Request - In IF block")
+        console.log("In Request - In IF block");
         sendPrePrepare();
       }
       // Make sure timer is not started multiple times
@@ -125,13 +133,22 @@ const server = net.createServer(socket => {
         // Send PREPARE to all servers
         send_tuple = ['PREPARE', host_id, my_view, msg_tuple[3]];
         json_data = JSON.stringify(send_tuple);
+        flag_sent = true;
         Object.values(connections).forEach(connection => {
           const socket = connection[0];
           const peer = connection[1];
           if(peer.type=='Server'){
-            socket.write(json_data);
+            flag_sent = flag_sent && socket.write(json_data + '\0');
           }
         });
+        if(flag_sent)
+        {
+          console.error(`Server ${host_id} SENT PREPARE to all`);
+        }
+        else
+        {
+          console.error(`Server ${host_id} couldn't SEND PREPARE to all`); 
+        }
 
         // Augement processing, set isPrepared
         processing.push(['PRE-PREPARE', host_id, my_view, msg_tuple[3]]);
@@ -150,13 +167,22 @@ const server = net.createServer(socket => {
             send_tuple = ['COMMIT', host_id, my_view];
             json_data = JSON.stringify(send_tuple);
             sleepSync(5000);
+            flag_sent = true;
             Object.values(connections).forEach(connection => {
               const socket = connection[0];
               const peer = connection[1];
               if(peer.type=='Server'){
-                socket.write(json_data);
+                flag_sent = flag_sent && socket.write(json_data + '\0');
               }
             });
+            if(flag_sent)
+            {
+              console.error(`Server ${host_id} SENT COMMIT to all`);
+            }
+            else
+            {
+              console.error(`Server ${host_id} couldn't SEND COMMIT to all`); 
+            }
             commit_sent = true;
             commit_count++;
           }
@@ -189,20 +215,23 @@ const server = net.createServer(socket => {
               const socket = connection[0];
               const peer = connection[1];
               if(peer.type=='Client' && peer.id==request[1]){
-                socket.write(json_data);
+                socket.write(json_data + '\0');
               }
             });
             remove_index = -1;
             for(i=0; i<unordered.length; i++){
-              if(unordered[i]==request){
+              console.log(JSON.stringify(unordered[i]), JSON.stringify(request[3]), JSON.stringify(unordered[i])==JSON.stringify(request[3]), JSON.stringify(unordered[i])===JSON.stringify(request[3]));
+              if(JSON.stringify(unordered[i])==JSON.stringify(request[3])){
                 remove_index = i;
                 break;
               }
             }
+            // console.log(unordered);
+            // console.log(request[3])
             if(remove_index!=-1){
-              unordered.splice(remove_index,remove_index);
+              unordered.splice(remove_index,1);
             }
-            else{
+            else if(length(unordered)!=0){
               console.log("REQUEST DOES NOT EXIST");
             }
           }
