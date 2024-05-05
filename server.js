@@ -27,7 +27,17 @@ commit_sent = false;
 reply_sent = false;
 isPrimary = false;
 blacklist = [];
-merge_list = []
+merge_list = [];
+
+checkPointBuffer = [];
+checkPoint = [{my_view : my_view, m_last : m_last, v_last : v_last,
+               unordered: unordered, pending : pending, processing:processing,
+               state : state, isPrepared : isPrepared, isPrePrepared : isPrePrepared,
+               prepared_count : prepared_count, commit_count : commit_count, 
+               merge_count : merge_count, commit_sent : commit_sent, reply_sent : reply_sent, 
+               blacklist : blacklist, merge_list : merge_list, prepared_request_digest : prepared_request_digest}
+               , checkPointBuffer];
+
 
 
 let buffer = '';
@@ -101,12 +111,6 @@ function readEnvFile() {
   }
 }
 
-readEnvFile();
-console.log(peers);
-if(my_view==host_id){
-  isPrimary=true;
-}
-
 // self_connection = [net.createConnection({port : host_port, host: host_addr}),{ type : 'Server', id: host_id, host_addr, port : host_port }]
 
 function sendPrePrepare(){
@@ -169,6 +173,344 @@ function sendPrePrepareMerge(){
   }
 }
 
+function reqStateTransfer(){
+  send_tuple = ['STATE-TRANSFER', host_id];
+  json_data = JSON.stringify(send_tuple);
+  Object.values(connections).forEach(connection => {
+    const socket = connection[0];
+    const peer = connection[1];
+    if(peer.type=='Server'){
+      socket.write(json_data + '\0');
+    }
+  });
+}
+
+function StateTransferHandler(msg_tuple){
+  send_tuple = ['STATE-REPLY', checkPoint];
+  json_data = JSON.stringify(send_tuple);
+  Object.values(connections).forEach(connection => {
+    const socket = connection[0];
+    const peer = connection[1];
+    if(peer.type=='Server' && peer.id == msg_tuple[1]){
+      socket.write(json_data + '\0');
+    }
+  });
+}
+
+function StateReplyHandler(msg_tuple){
+  updateState(msg_tuple[1][0]);
+  executeCommands(msg_tuple[1][1]);
+}
+
+function RequestHandler(msg_tuple){
+  // console.log("Received REQUEST " + msg_tuple);
+  // TODO : Crytpo check!
+  console.log("In Request");
+  unordered.push(msg_tuple);
+  if(unordered.length==1 && isPrimary==true){
+    console.log("In Request - In IF block");
+    sendPrePrepare();
+  }
+  // Make sure timer is not started multiple times
+
+  startTimer();
+}
+
+function PrePrepareHandler(msg_tuple){
+  // console.log("Received PRE-PREPARE " + msg_tuple);
+  // Check validity of PRE-PREPARE message
+  if(msg_tuple[2]==my_view && my_view-1 == v_last && isPrepared==false && state == 'normal'){
+    // Send PREPARE to all servers
+    send_tuple = ['PREPARE', host_id, my_view, msg_tuple[3]];
+    json_data = JSON.stringify(send_tuple);
+    flag_sent = true;
+    Object.values(connections).forEach(connection => {
+      const socket = connection[0];
+      const peer = connection[1];
+      if(peer.type=='Server'){
+        flag_sent = flag_sent && socket.write(json_data + '\0');
+      }
+    });
+    if(flag_sent)
+    {
+      console.error(`Server ${host_id} SENT PREPARE to all`);
+    }
+    else
+    {
+      console.error(`Server ${host_id} couldn't SEND PREPARE to all`); 
+    }
+
+    // Augement processing, set isPrepared
+    // Store PRE-PREPARE messages in processing map
+    if(processing.has([JSON.stringify(msg_tuple[3]), msg_tuple[2]]))
+    {
+      ;
+    }
+    else
+    {
+      processing.set([JSON.stringify(msg_tuple[3]), msg_tuple[2]], [ ]);
+    }
+    isPrepared = true;
+    prepared_count++;
+  }
+}
+
+function PrepareHandler(msg_tuple){
+  // console.log("Received PREPARE " + msg_tuple);
+  // PREPARE message validity check
+  if(msg_tuple[2]==my_view){ //Removed the second condition, check once
+    prepared_count++;
+    for(const [key, value] of processing)
+    {
+      if(key[1]==my_view && JSON.stringify(key[0][3])==JSON.stringify(msg_tuple[3]))
+      {
+        value.push(msg_tuple);
+        break;
+      }
+    }
+    if(prepared_count >= (2*f+1) && commit_sent==false){
+      if(state=='normal'){
+        send_tuple = ['COMMIT', host_id, my_view];
+        json_data = JSON.stringify(send_tuple);
+        sleepSync(5000);
+        flag_sent = true;
+        Object.values(connections).forEach(connection => {
+          const socket = connection[0];
+          const peer = connection[1];
+          if(peer.type=='Server'){
+            flag_sent = flag_sent && socket.write(json_data + '\0');
+          }
+        });
+        if(flag_sent)
+        {
+          console.error(`Server ${host_id} SENT COMMIT to all`);
+        }
+        else
+        {
+          console.error(`Server ${host_id} couldn't SEND COMMIT to all`); 
+        }
+        commit_sent = true;
+        commit_count++;
+      }
+    }
+  }
+}
+
+function CommitHandler(msg_tuple){
+  // console.log("Received COMMIT " + msg_tuple);
+  if(msg_tuple[2]==my_view){
+    commit_count++;
+    if(commit_count >= 2*f+1 && reply_sent==false){
+      if(state=='normal'){
+        stopTimer();
+      }
+      request = null;
+      for(const [key, value] of processing)
+
+      if(request!=null){
+        reply = exec(request);
+        send_tuple = ['REPLY', host_id, reply];
+        json_data = JSON.stringify(send_tuple);
+        Object.values(connections).forEach(connection => {
+          const socket = connection[0];
+          const peer = connection[1];
+          if(peer.type=='Client' && peer.id==request[1]){
+            socket.write(json_data + '\0');
+          }
+        });
+        remove_index = -1;
+        for(i=0; i<unordered.length; i++){
+          console.log(JSON.stringify(unordered[i]), JSON.stringify(request[3]), JSON.stringify(unordered[i])==JSON.stringify(request[3]), JSON.stringify(unordered[i])===JSON.stringify(request[3]));
+          if(JSON.stringify(unordered[i])==JSON.stringify(request[3])){
+            remove_index = i;
+            break;
+          }
+        }
+        // console.log(unordered);
+        // console.log(request[3])
+        if(remove_index!=-1){
+          unordered.splice(remove_index,1);
+        }
+        else if((unordered.length)!=0){
+          console.log("REQUEST DOES NOT EXIST");
+        }
+      }
+      else{
+        // merge stuff
+      }
+      v_last = my_view;
+      
+      isPrepared=false;
+      isPrePrepared=false;
+      prepared_count = 0;
+      commit_count = 0;
+      commit_sent = false;
+      reply_sent = false;
+      my_view++;
+      while(blacklist.includes((my_view)%n))
+      {
+        my_view++;
+      }
+      if((my_view%n)==host_id){
+        isPrimary=true;
+
+        if(merge_count>=2*f+1)
+        {
+          sendPrePrepareMerge();
+        }
+        if(unordered.length!=0){
+          sendPrePrepare();
+        }
+      }
+
+      //something to do with pending
+      
+    }
+  }
+}
+
+function MergeHandler(msg_tuple){
+  if(msg_tuple[2] >= v_last){
+    merge_count++;
+    if(merge_count >= 2*f+1)
+    {
+      state = 'merge';
+      isPrePrepared = false;
+      isPrepared = false;
+      for (const [key, value] of processing) {
+        if (value.length >= 2 * f + 1 && key[1] >= v_last - n) {
+            myP = value;
+            send_tuple = ['MERGE', host_id, my_view, myP];
+            json_data = JSON.stringify(send_tuple);
+            let flag_sent = true; // Initialize flag_sent here
+            Object.values(connections).forEach(connection => {
+                const socket = connection[0];
+                const peer = connection[1];
+                if (peer.type === 'Server') {
+                    flag_sent = flag_sent && socket.write(json_data + '\0');
+                }
+            });
+            if (flag_sent) {
+                console.error(`Server ${host_id} SENT MERGE to all`);
+            } else {
+                console.error(`Server ${host_id} couldn't SEND MERGE to all`);
+            }
+            break; // Break out of the loop after sending MERGE
+        }
+      }        
+    }
+  }
+}
+
+function PrePrepareMergeHandler(msg_tuple){
+  if(isPrePrepared==false && v >= v_last){
+    v_min = my_view+100;
+    for(let i=0; i<(msg_tuple[4].length); i++)
+    {
+      if(msg_tuple[4][i][2]<v_min)
+      {
+        v_min = msg_tuple[4][i][2];
+      }
+    }
+    if(v_last+1 >= v_min)
+    {
+      my_view = msg_tuple[2];
+      dm = msg_tuple[3];
+      isPrepared = true;
+      state = 'normal';
+      if(m_last < v_last)
+      {
+        if(blacklist.length==f)
+        {
+          blacklist.shift();
+        }
+        blacklist.push((my_view-1)%n);
+      }
+      else
+      {
+        blacklist[blacklist.length-1] = (my_view-1)%n;
+      }
+      m_last = my_view;
+      send_tuple = ['PREPARE', host_id, my_view, dm];
+      json_data = JSON.stringify(send_tuple);
+      Object.values(connections).forEach(connection => {
+        const socket = connection[0];
+        const peer = connection[1];
+        if(peer.type=='Server'){
+          flag_sent = flag_sent && socket.write(json_data + '\0');
+        }
+      });
+    }
+    else
+    {
+      reqStateTransfer();
+    }
+  }
+}
+
+function MessageHandler(msg_tuple){
+  const msg_type = msg_tuple[0];
+    if(msg_type=='STATE-TRANSFER'){
+      StateTransferHandler(msg_tuple);
+    }
+
+    if(msg_type=='STATE-REPLY'){
+      StateReplyHandler(msg_tuple);
+    }
+
+    if(msg_type=='REQUEST'){
+      RequestHandler(msg_tuple);
+    }
+
+    if(msg_type=='PRE-PREPARE'){
+      PrePrepareHandler(msg_tuple);
+    }
+
+    if(msg_type=='PREPARE'){
+      PrepareHandler(msg_tuple);
+    }
+
+    if(msg_type=='COMMIT'){
+      CommitHandler(msg_tuple);
+    }
+
+    if(msg_type=='MERGE'){
+      MergeHandler(msg_tuple);
+    }
+    
+    if(msg_tuple=='PRE-PREPARE-MERGE'){
+      PrePrepareMergeHandler(msg_tuple);
+    }
+}
+
+function updateState(serverState){
+  my_view = serverState.my_view;
+  m_last = serverState.m_last;
+  v_last = serverState.v_last;
+  unordered = serverState.unordered;
+  pending = serverState.pending;
+  processing = serverState.processing;
+  state = serverState.state;
+  isPrepared = serverState.isPrepared;
+  isPrePrepared = serverState.isPrePrepared;
+  prepared_count = serverState.prepared_count;
+  commit_count = serverState.commit_count;
+  merge_count = serverState.merge_count;
+  prepared_request_digest = serverState.prepared_request_digest;
+  commit_sent = serverState.commit_sent;
+  reply_sent = serverState.reply_sent;
+  blacklist = serverState.blacklist;
+  merge_list = serverState.merge_list;
+}
+
+function executeCommands(commandsList){
+  commandsList.forEach(command => {
+    MessageHandler(command);
+  })
+}
+
+
+
 const server = net.createServer(socket => {
   console.log('New connection from ' + socket.remoteAddress + ':' + socket.remotePort);
   connectToPeers();
@@ -183,259 +525,9 @@ const server = net.createServer(socket => {
     buffer = '';
     console.log('Received data from ' + socket.remoteAddress + ':' + socket.remotePort + ': ' + data.toString());
     const msg_tuple = JSON.parse(data);
-    const msg_type = msg_tuple[0];
+    checkPointBuffer.add(msg_tuple);
 
-    if(msg_type=='REQUEST'){
-      // console.log("Received REQUEST " + msg_tuple);
-      // TODO : Crytpo check!
-      console.log("In Request");
-      unordered.push(msg_tuple);
-      if(unordered.length==1 && isPrimary==true){
-        console.log("In Request - In IF block");
-        sendPrePrepare();
-      }
-      // Make sure timer is not started multiple times
-
-      startTimer();
-    }
-
-    if(msg_type=='PRE-PREPARE'){
-      // console.log("Received PRE-PREPARE " + msg_tuple);
-      // Check validity of PRE-PREPARE message
-      if(msg_tuple[2]==my_view && my_view-1 == v_last && isPrepared==false && state == 'normal'){
-        // Send PREPARE to all servers
-        send_tuple = ['PREPARE', host_id, my_view, msg_tuple[3]];
-        json_data = JSON.stringify(send_tuple);
-        flag_sent = true;
-        Object.values(connections).forEach(connection => {
-          const socket = connection[0];
-          const peer = connection[1];
-          if(peer.type=='Server'){
-            flag_sent = flag_sent && socket.write(json_data + '\0');
-          }
-        });
-        if(flag_sent)
-        {
-          console.error(`Server ${host_id} SENT PREPARE to all`);
-        }
-        else
-        {
-          console.error(`Server ${host_id} couldn't SEND PREPARE to all`); 
-        }
-
-        // Augement processing, set isPrepared
-        // Store PRE-PREPARE messages in processing map
-        if(processing.has([JSON.stringify(msg_tuple[3]), msg_tuple[2]]))
-        {
-          ;
-        }
-        else
-        {
-          processing.set([JSON.stringify(msg_tuple[3]), msg_tuple[2]], [ ]);
-        }
-        isPrepared = true;
-        prepared_count++;
-      }
-    }
-
-    if(msg_type=='PREPARE'){
-      // console.log("Received PREPARE " + msg_tuple);
-      // PREPARE message validity check
-      if(msg_tuple[2]==my_view){ //Removed the second condition, check once
-        prepared_count++;
-        for(const [key, value] of processing)
-        {
-          if(key[1]==my_view && JSON.stringify(key[0][3])==JSON.stringify(msg_tuple[3]))
-          {
-            value.push(msg_tuple);
-            break;
-          }
-        }
-        if(prepared_count >= (2*f+1) && commit_sent==false){
-          if(state=='normal'){
-            send_tuple = ['COMMIT', host_id, my_view];
-            json_data = JSON.stringify(send_tuple);
-            sleepSync(5000);
-            flag_sent = true;
-            Object.values(connections).forEach(connection => {
-              const socket = connection[0];
-              const peer = connection[1];
-              if(peer.type=='Server'){
-                flag_sent = flag_sent && socket.write(json_data + '\0');
-              }
-            });
-            if(flag_sent)
-            {
-              console.error(`Server ${host_id} SENT COMMIT to all`);
-            }
-            else
-            {
-              console.error(`Server ${host_id} couldn't SEND COMMIT to all`); 
-            }
-            commit_sent = true;
-            commit_count++;
-          }
-        }
-      }
-    }
-
-    // If replied, and isPrimary and unordered in non empty, then sendPreprepare
-
-    if(msg_type=='COMMIT'){
-      // console.log("Received COMMIT " + msg_tuple);
-      if(msg_tuple[2]==my_view){
-        commit_count++;
-        if(commit_count >= 2*f+1 && reply_sent==false){
-          if(state=='normal'){
-            stopTimer();
-          }
-          request = null;
-          for(const [key, value] of processing)
-
-          if(request!=null){
-            reply = exec(request);
-            send_tuple = ['REPLY', host_id, reply];
-            json_data = JSON.stringify(send_tuple);
-            Object.values(connections).forEach(connection => {
-              const socket = connection[0];
-              const peer = connection[1];
-              if(peer.type=='Client' && peer.id==request[1]){
-                socket.write(json_data + '\0');
-              }
-            });
-            remove_index = -1;
-            for(i=0; i<unordered.length; i++){
-              console.log(JSON.stringify(unordered[i]), JSON.stringify(request[3]), JSON.stringify(unordered[i])==JSON.stringify(request[3]), JSON.stringify(unordered[i])===JSON.stringify(request[3]));
-              if(JSON.stringify(unordered[i])==JSON.stringify(request[3])){
-                remove_index = i;
-                break;
-              }
-            }
-            // console.log(unordered);
-            // console.log(request[3])
-            if(remove_index!=-1){
-              unordered.splice(remove_index,1);
-            }
-            else if((unordered.length)!=0){
-              console.log("REQUEST DOES NOT EXIST");
-            }
-          }
-          else{
-            // merge stuff
-          }
-          v_last = my_view;
-          
-          isPrepared=false;
-          isPrePrepared=false;
-          prepared_count = 0;
-          commit_count = 0;
-          commit_sent = false;
-          reply_sent = false;
-          my_view++;
-          while(blacklist.includes((my_view)%n))
-          {
-            my_view++;
-          }
-          if((my_view%n)==host_id){
-            isPrimary=true;
-
-            if(merge_count>=2*f+1)
-            {
-              sendPrePrepareMerge();
-            }
-            if(unordered.length!=0){
-              sendPrePrepare();
-            }
-          }
-
-          //something to do with pending
-          
-        }
-      }
-    }
-
-    if(msg_type=='MERGE'){
-      if(msg_tuple[2] >= v_last)
-      {
-        merge_count++;
-        if(merge_count >= 2*f+1)
-        {
-          state = 'merge';
-          isPrePrepared = false;
-          isPrepared = false;
-          for (const [key, value] of processing) {
-            if (value.length >= 2 * f + 1 && key[1] >= v_last - n) {
-                myP = value;
-                send_tuple = ['MERGE', host_id, my_view, myP];
-                json_data = JSON.stringify(send_tuple);
-                let flag_sent = true; // Initialize flag_sent here
-                Object.values(connections).forEach(connection => {
-                    const socket = connection[0];
-                    const peer = connection[1];
-                    if (peer.type === 'Server') {
-                        flag_sent = flag_sent && socket.write(json_data + '\0');
-                    }
-                });
-                if (flag_sent) {
-                    console.error(`Server ${host_id} SENT MERGE to all`);
-                } else {
-                    console.error(`Server ${host_id} couldn't SEND MERGE to all`);
-                }
-                break; // Break out of the loop after sending MERGE
-            }
-          }        
-        }
-      }
-    }
-    
-    if(msg_tuple=='PRE-PREPARE-MERGE')
-    {
-      if(isPrePrepared==false && v >= v_last)
-      {
-        v_min = my_view+100;
-        for(let i=0; i<(msg_tuple[4].length); i++)
-        {
-          if(msg_tuple[4][i][2]<v_min)
-          {
-            v_min = msg_tuple[4][i][2];
-          }
-        }
-        if(v_last+1 >= v_min)
-        {
-          my_view = msg_tuple[2];
-          dm = msg_tuple[3];
-          isPrepared = true;
-          state = 'normal';
-          if(m_last < v_last)
-          {
-            if(blacklist.length==f)
-            {
-              blacklist.shift();
-            }
-            blacklist.push((my_view-1)%n);
-          }
-          else
-          {
-            blacklist[blacklist.length-1] = (my_view-1)%n;
-          }
-          m_last = my_view;
-          send_tuple = ['PREPARE', host_id, my_view, dm];
-          json_data = JSON.stringify(send_tuple);
-          Object.values(connections).forEach(connection => {
-            const socket = connection[0];
-            const peer = connection[1];
-            if(peer.type=='Server'){
-              flag_sent = flag_sent && socket.write(json_data + '\0');
-            }
-          });
-        }
-        else
-        {
-          // StateTransfer()
-        }
-      }
-    }
-
+    MessageHandler(msg_tuple);
   });
 
   socket.on('close', () => {
@@ -457,6 +549,12 @@ server.listen(host_port, () => {
   connectToPeers();
 });
 
+readEnvFile();
+console.log(peers);
+if(my_view==host_id){
+  isPrimary=true;
+}
+
 const connections = {};
 
 function connectToPeers() {
@@ -472,25 +570,3 @@ function connectToPeers() {
   }
 });
 }
-
-// // Create readline interface
-// const rl = readline.createInterface({
-//   input: process.stdin,
-//   output: process.stdout
-// });
-
-// // Prompt user for input
-// rl.setPrompt('Enter message: ');
-
-// // Listen for user input
-// rl.on('line', input => {
-//   // Send input to all connected peers
-//   Object.values(connections).forEach(client => {
-    
-//     client.write(input);
-//   });
-
-//   rl.prompt();
-// });
-
-// rl.prompt();
