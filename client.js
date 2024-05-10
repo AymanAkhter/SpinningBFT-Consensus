@@ -100,7 +100,7 @@ rl.on('line', input => {
     const msg_tuple = ['REQUEST', host_id, seq, input]
     const json_data = JSON.stringify(msg_tuple);
     const client = connection[0];
-    (client).write(json_data);
+    (client).write(json_data + '\0');
   });
   seq++;
   rl.prompt();

@@ -1,11 +1,11 @@
 const net = require('net');
-const http = require('http');
 const readline = require('readline');
 const envFilePath = './hosts.env';
 const peers = [];
 const host_type = process.argv[2];
 const host_id = parseInt(process.argv[3]);
 const fs = require('fs');
+// const { request } = require('http');
 host_addr = -1;
 host_port = -1;
 my_view = 0;
@@ -46,8 +46,8 @@ function sleepSync(ms) {
   while (Date.now() - start < ms) {}
 }
 
-const delayMS = 15000; // Delay in ms
-const timer = setTimeout(expireTimer, delayMS);
+const delayMS = 1500000; // Delay in ms
+let timer = setTimeout(expireTimer, delayMS);
 clearTimeout(timer);
 // Processing is a map from {[<REQUEST, c, seq, op>, view_of_request] -> list of PREPARE messages corresponding to this request and view}
 
@@ -131,6 +131,14 @@ function sendPrePrepare(){
       }
     });
     isPrePrepared = true;
+    if(processing.has([dm, my_view]))
+    {
+      ;
+    }
+    else
+    {
+      processing.set([dm, my_view]);
+    }
   }
 }
 
@@ -173,6 +181,24 @@ function sendPrePrepareMerge(){
   }
 }
 
+function executeRequestAndLog(request, reply) {
+  const logData = `${new Date().toISOString()} - Request: ${(request)}, Reply: ${(reply)}\n`;
+  const logFileName = `server_${host_id}_log.txt`;
+
+  if (!fs.existsSync(logFileName)) {
+      fs.writeFileSync(logFileName, '');
+  }
+
+  fs.appendFile(logFileName, logData, (err) => {
+      if (err) {
+          console.error(`Error writing to log file ${logFileName}:`, err);
+      } else {
+          console.log(`Request logged to ${logFileName}`);
+          console.log(unordered);
+      }
+  });
+}
+
 function reqStateTransfer(){
   send_tuple = ['STATE-TRANSFER', host_id];
   json_data = JSON.stringify(send_tuple);
@@ -206,7 +232,7 @@ function RequestHandler(msg_tuple){
   // console.log("Received REQUEST " + msg_tuple);
   // TODO : Crytpo check!
   console.log("In Request");
-  unordered.push(msg_tuple);
+  unordered.push(JSON.stringify(msg_tuple));
   if(unordered.length==1 && isPrimary==true){
     console.log("In Request - In IF block");
     sendPrePrepare();
@@ -242,13 +268,13 @@ function PrePrepareHandler(msg_tuple){
 
     // Augement processing, set isPrepared
     // Store PRE-PREPARE messages in processing map
-    if(processing.has([JSON.stringify(msg_tuple[3]), msg_tuple[2]]))
+    if(processing.has([(msg_tuple[3]), msg_tuple[2]]))
     {
       ;
     }
     else
     {
-      processing.set([JSON.stringify(msg_tuple[3]), msg_tuple[2]], [ ]);
+      processing.set([(msg_tuple[3]), msg_tuple[2]], [ ]);
     }
     isPrepared = true;
     prepared_count++;
@@ -262,7 +288,8 @@ function PrepareHandler(msg_tuple){
     prepared_count++;
     for(const [key, value] of processing)
     {
-      if(key[1]==my_view && JSON.stringify(key[0][3])==JSON.stringify(msg_tuple[3]))
+      // No value being pushed into processing idk why
+      if(key[1]==my_view && (key[0][3])==(msg_tuple[3]))
       {
         value.push(msg_tuple);
         break;
@@ -305,9 +332,21 @@ function CommitHandler(msg_tuple){
         stopTimer();
       }
       request = null;
+      console.log(`Processing is ${processing}`);
       for(const [key, value] of processing)
-
+      {
+        console.log(key, value, "Are the key and value");
+        console.log(key[1], my_view, key[1]==my_view, parseInt(key[1])==parseInt(my_view));
+        {
+          if(parseInt(key[1])==parseInt(my_view))
+            {
+              request = (key[0]);
+            }
+        }
+      }
+      console.log(`Request is ${request} and unordered is ${unordered}`)
       if(request!=null){
+        console.log(`Executing request ${request}`);
         reply = exec(request);
         send_tuple = ['REPLY', host_id, reply];
         json_data = JSON.stringify(send_tuple);
@@ -318,10 +357,11 @@ function CommitHandler(msg_tuple){
             socket.write(json_data + '\0');
           }
         });
+        executeRequestAndLog(request, json_data);
         remove_index = -1;
         for(i=0; i<unordered.length; i++){
-          console.log(JSON.stringify(unordered[i]), JSON.stringify(request[3]), JSON.stringify(unordered[i])==JSON.stringify(request[3]), JSON.stringify(unordered[i])===JSON.stringify(request[3]));
-          if(JSON.stringify(unordered[i])==JSON.stringify(request[3])){
+          console.log((unordered[i]), (request), (unordered[i])==(request), (unordered[i])===(request));
+          if((unordered[i])==(request)){
             remove_index = i;
             break;
           }
@@ -329,6 +369,8 @@ function CommitHandler(msg_tuple){
         // console.log(unordered);
         // console.log(request[3])
         if(remove_index!=-1){
+          console.log(`Executed Request found at ${remove_index} and removed`);
+          console.log(`Unordered is ${unordered}`);
           unordered.splice(remove_index,1);
         }
         else if((unordered.length)!=0){
@@ -525,7 +567,7 @@ const server = net.createServer(socket => {
     buffer = '';
     console.log('Received data from ' + socket.remoteAddress + ':' + socket.remotePort + ': ' + data.toString());
     const msg_tuple = JSON.parse(data);
-    checkPointBuffer.add(msg_tuple);
+    checkPointBuffer.push(msg_tuple);
 
     MessageHandler(msg_tuple);
   });
@@ -544,16 +586,18 @@ server.on('error', err => {
   console.error('Server error: ' + err.message);
 });
 
-server.listen(host_port, () => {
-  console.log('Server started on port ' + host_port);
-  connectToPeers();
-});
-
 readEnvFile();
 console.log(peers);
 if(my_view==host_id){
   isPrimary=true;
 }
+
+server.listen(host_port, () => {
+  console.log('Server started on port ' + host_port);
+  connectToPeers();
+});
+
+
 
 const connections = {};
 
