@@ -118,7 +118,7 @@ function sendPrePrepare(){
     // Need to check for empty list condition 
     // UPDATE: (Ok i fixed something so it shouldnt happen)
 
-    console.log("In sendPrepPrepare");
+    // console.log("In sendPrepPrepare");
     dm = unordered[0];
     unordered.shift();
     send_tuple = ['PRE-PREPARE', host_id, my_view, dm];
@@ -231,10 +231,10 @@ function StateReplyHandler(msg_tuple){
 function RequestHandler(msg_tuple){
   // console.log("Received REQUEST " + msg_tuple);
   // TODO : Crytpo check!
-  console.log("In Request");
+  // console.log("In Request");
   unordered.push(JSON.stringify(msg_tuple));
   if(unordered.length==1 && isPrimary==true){
-    console.log("In Request - In IF block");
+    // console.log("In Request - In IF block");
     sendPrePrepare();
   }
   // Make sure timer is not started multiple times
@@ -332,10 +332,10 @@ function CommitHandler(msg_tuple){
         stopTimer();
       }
       request = null;
-      console.log(`Processing is ${processing}`);
+      // console.log(`Processing is ${processing}`);
       for(const [key, value] of processing)
       {
-        console.log(key, value, "Are the key and value");
+        // console.log(key, value, "Are the key and value");
         console.log(key[1], my_view, key[1]==my_view, parseInt(key[1])==parseInt(my_view));
         {
           if(parseInt(key[1])==parseInt(my_view))
@@ -370,7 +370,7 @@ function CommitHandler(msg_tuple){
         // console.log(request[3])
         if(remove_index!=-1){
           console.log(`Executed Request found at ${remove_index} and removed`);
-          console.log(`Unordered is ${unordered}`);
+          // console.log(`Unordered is ${unordered}`);
           unordered.splice(remove_index,1);
         }
         else if((unordered.length)!=0){
@@ -557,19 +557,32 @@ const server = net.createServer(socket => {
   console.log('New connection from ' + socket.remoteAddress + ':' + socket.remotePort);
   connectToPeers();
 
+  // socket.on('data', data => {
+  //   buffer += data.toString();
+  //   const delimIndex = buffer.indexOf('\0');
+  //   if(delimIndex!==-1)
+  //   {
+  //     data = buffer.substring(0, delimIndex);
+  //   }
+  //   buffer = '';
+  //   console.log('Received data from ' + socket.remoteAddress + ':' + socket.remotePort + ': ' + data.toString());
+  //   const msg_tuple = JSON.parse(data);
+  //   checkPointBuffer.push(msg_tuple);
+
+  //   MessageHandler(msg_tuple);
+  // });
+
   socket.on('data', data => {
     buffer += data.toString();
-    const delimIndex = buffer.indexOf('\0');
-    if(delimIndex!==-1)
-    {
-      data = buffer.substring(0, delimIndex);
-    }
-    buffer = '';
-    console.log('Received data from ' + socket.remoteAddress + ':' + socket.remotePort + ': ' + data.toString());
-    const msg_tuple = JSON.parse(data);
-    checkPointBuffer.push(msg_tuple);
-
-    MessageHandler(msg_tuple);
+    let delimIndex;
+    while ((delimIndex = buffer.indexOf('\0')) !== -1) {
+        const message = buffer.substring(0, delimIndex);
+        buffer = buffer.substring(delimIndex + 1);
+        console.log('Received data from ' + socket.remoteAddress + ':' + socket.remotePort + ': ' + message);
+        const msg_tuple = JSON.parse(message);
+        checkPointBuffer.push(msg_tuple);
+        MessageHandler(msg_tuple);
+      }
   });
 
   socket.on('close', () => {
