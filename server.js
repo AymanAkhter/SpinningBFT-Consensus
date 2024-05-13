@@ -19,7 +19,7 @@ isPrepared = false;
 isPrePrepared = false;
 prepared_count = 0;
 commit_count = 0;
-f = 0;
+f = 1;
 n = 3;
 merge_count = 0;
 prepared_request_digest = null;
@@ -28,6 +28,9 @@ reply_sent = false;
 isPrimary = false;
 blacklist = [];
 merge_list = [];
+
+console.log = function(){}
+// console.error = function(){}
 
 checkPointBuffer = [];
 checkPoint = [{my_view : my_view, m_last : m_last, v_last : v_last,
@@ -118,9 +121,9 @@ function sendPrePrepare(){
     // Need to check for empty list condition 
     // UPDATE: (Ok i fixed something so it shouldnt happen)
 
-    // console.log("In sendPrepPrepare");
+    console.log("In sendPrepPrepare");
     dm = unordered[0];
-    unordered.shift();
+    // unordered.shift();
     send_tuple = ['PRE-PREPARE', host_id, my_view, dm];
     json_data = JSON.stringify(send_tuple);
     Object.values(connections).forEach(connection => {
@@ -173,11 +176,11 @@ function sendPrePrepareMerge(){
   });
   if(flag_sent)
   {
-    console.error(`Server ${host_id} SENT PRE-PREPARE-MERGE to all`);
+    // console.error(`Server ${host_id} SENT PRE-PREPARE-MERGE to all`);
   }
   else
   {
-    console.error(`Server ${host_id} couldn't SEND PRE-PREPARE-MERGE to all`); 
+    // console.error(`Server ${host_id} couldn't SEND PRE-PREPARE-MERGE to all`); 
   }
 }
 
@@ -193,8 +196,8 @@ function executeRequestAndLog(request, reply) {
       if (err) {
           console.error(`Error writing to log file ${logFileName}:`, err);
       } else {
-          console.log(`Request logged to ${logFileName}`);
-          console.log(unordered);
+          // console.log(`Request logged to ${logFileName}`);
+          // console.log(unordered);
       }
   });
 }
@@ -259,11 +262,11 @@ function PrePrepareHandler(msg_tuple){
     });
     if(flag_sent)
     {
-      console.error(`Server ${host_id} SENT PREPARE to all`);
+      // console.error(`Server ${host_id} SENT PREPARE to all`);
     }
     else
     {
-      console.error(`Server ${host_id} couldn't SEND PREPARE to all`); 
+      // console.error(`Server ${host_id} couldn't SEND PREPARE to all`); 
     }
 
     // Augement processing, set isPrepared
@@ -284,6 +287,23 @@ function PrePrepareHandler(msg_tuple){
 function PrepareHandler(msg_tuple){
   // console.log("Received PREPARE " + msg_tuple);
   // PREPARE message validity check
+  // if(msg_tuple[2]<my_view){
+  //   send_tuple = ['COMMIT', host_id, msg_tuple[2]];
+  //   json_data = JSON.stringify(send_tuple);
+  //   flag_sent = true;
+  //   sleepSync(100);
+  //   Object.values(connections).forEach(connection => {
+  //     const socket = connection[0];
+  //     const peer = connection[1];
+  //     if(peer.type=='Server'){
+  //       flag_sent = flag_sent && socket.write(json_data + '\0');
+  //     }
+  //   });
+  //   if(flag_sent)
+  //   {
+  //     console.error(`Server ${host_id} SENT AN OLD PREPARE to all`);
+  //   }
+  // }
   if(msg_tuple[2]==my_view){ //Removed the second condition, check once
     prepared_count++;
     for(const [key, value] of processing)
@@ -299,7 +319,7 @@ function PrepareHandler(msg_tuple){
       if(state=='normal'){
         send_tuple = ['COMMIT', host_id, my_view];
         json_data = JSON.stringify(send_tuple);
-        sleepSync(5000);
+        sleepSync(10);
         flag_sent = true;
         Object.values(connections).forEach(connection => {
           const socket = connection[0];
@@ -310,11 +330,11 @@ function PrepareHandler(msg_tuple){
         });
         if(flag_sent)
         {
-          console.error(`Server ${host_id} SENT COMMIT to all`);
+          // console.error(`Server ${host_id} SENT COMMIT to all`);
         }
         else
         {
-          console.error(`Server ${host_id} couldn't SEND COMMIT to all`); 
+          // console.error(`Server ${host_id} couldn't SEND COMMIT to all`); 
         }
         commit_sent = true;
         commit_count++;
@@ -344,12 +364,13 @@ function CommitHandler(msg_tuple){
             }
         }
       }
-      console.log(`Request is ${request} and unordered is ${unordered}`)
+      // console.log(`Request is ${request} and unordered is ${unordered}`)
       if(request!=null){
         console.log(`Executing request ${request}`);
         reply = exec(request);
         send_tuple = ['REPLY', host_id, reply];
         json_data = JSON.stringify(send_tuple);
+        sleepSync(10);
         Object.values(connections).forEach(connection => {
           const socket = connection[0];
           const peer = connection[1];
@@ -360,7 +381,7 @@ function CommitHandler(msg_tuple){
         executeRequestAndLog(request, json_data);
         remove_index = -1;
         for(i=0; i<unordered.length; i++){
-          console.log((unordered[i]), (request), (unordered[i])==(request), (unordered[i])===(request));
+          // console.log((unordered[i]), (request), (unordered[i])==(request), (unordered[i])===(request));
           if((unordered[i])==(request)){
             remove_index = i;
             break;
@@ -433,9 +454,9 @@ function MergeHandler(msg_tuple){
                 }
             });
             if (flag_sent) {
-                console.error(`Server ${host_id} SENT MERGE to all`);
+                // console.error(`Server ${host_id} SENT MERGE to all`);
             } else {
-                console.error(`Server ${host_id} couldn't SEND MERGE to all`);
+                // console.error(`Server ${host_id} couldn't SEND MERGE to all`);
             }
             break; // Break out of the loop after sending MERGE
         }
@@ -550,8 +571,6 @@ function executeCommands(commandsList){
     MessageHandler(command);
   })
 }
-
-
 
 const server = net.createServer(socket => {
   console.log('New connection from ' + socket.remoteAddress + ':' + socket.remotePort);

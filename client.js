@@ -96,13 +96,18 @@ rl.setPrompt('Enter message: ');
 
 // Listen for user input
 rl.on('line', input => {
-  Object.values(connections).forEach(connection => {
-    const msg_tuple = ['REQUEST', host_id, seq, input]
-    const json_data = JSON.stringify(msg_tuple);
-    const client = connection[0];
-    (client).write(json_data + '\0');
-  });
-  seq++;
+  
+  for(i = 0; i<parseInt(input); i++){
+    send_req = "REQUEST " + (i);
+    Object.values(connections).forEach(connection => {
+      const msg_tuple = ['REQUEST', host_id, (seq-1), send_req]
+      const json_data = JSON.stringify(msg_tuple);
+      const client = connection[0];
+      (client).write(json_data + '\0');
+    });
+    seq++;
+  }
+  
   rl.prompt();
 });
 
