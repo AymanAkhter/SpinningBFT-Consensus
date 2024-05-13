@@ -20,7 +20,7 @@ isPrePrepared = false;
 prepared_count = 0;
 commit_count = 0;
 f = 1;
-n = 3;
+n = 4;
 merge_count = 0;
 prepared_request_digest = null;
 commit_sent = false;
@@ -28,8 +28,61 @@ reply_sent = false;
 isPrimary = false;
 blacklist = [];
 merge_list = [];
+timerStarted = false;
 
-console.log = function(){}
+const timeout = 5000;
+
+
+class Timer {
+  constructor(callback, interval) {
+    this.callback = callback;
+    this.interval = interval;
+    this.timerId = null;
+    this.elapsedTime = 0;
+  }
+
+  start() {
+    if (!this.timerId) {
+      this.timerId = setInterval(() => {
+        this.elapsedTime += this.interval;
+        this.callback(this.elapsedTime);
+      }, this.interval);
+    }
+  }
+
+  stop() {
+    clearInterval(this.timerId);
+    this.timerId = null;
+  }
+
+  restart() {
+    this.stop();
+    this.elapsedTime = 0;
+    this.start();
+  }
+}
+
+// Example usage:
+const timerCallback = (elapsedTime) => {
+  console.log(`Elapsed Time: ${elapsedTime} milliseconds`);
+  expireTimer();
+};
+
+const timer = new Timer(timerCallback, timeout); // Callback called every second
+
+// timer.start(); // Start the timer
+
+// // After 5 seconds, stop the timer
+// setTimeout(() => {
+//   timer.stop();
+// }, 5000);
+
+// // After 2 more seconds, restart the timer
+// setTimeout(() => {
+//   timer.restart();
+// }, 7000);
+
+// console.log = function(){}
 // console.error = function(){}
 
 checkPointBuffer = [];
@@ -49,42 +102,49 @@ function sleepSync(ms) {
   while (Date.now() - start < ms) {}
 }
 
-const delayMS = 1500000; // Delay in ms
-let timer = setTimeout(expireTimer, delayMS);
-clearTimeout(timer);
-// Processing is a map from {[<REQUEST, c, seq, op>, view_of_request] -> list of PREPARE messages corresponding to this request and view}
+// const delayMS = 5000; // Delay in ms
+// let timer = setTimeout(expireTimer, delayMS);
+// clearTimeout(timer);
+// // Processing is a map from {[<REQUEST, c, seq, op>, view_of_request] -> list of PREPARE messages corresponding to this request and view}
 
-function startTimer (){
-  timer = setTimeout(expireTimer, delayMS);
-}
+// function startTimer (){
+//   timer = setTimeout(expireTimer, delayMS);
+// }
 
-function stopTimer (){
-  clearTimeout(timer);
-}
+// function stopTimer (){
+//   clearTimeout(timer);
+// }
 
-function restartTimer(){
-  timer(expireTimer, delayMS);
-}
+// function restartTimer(){
+//   timer(expireTimer, delayMS);
+// }
 
 function expireTimer(){
-  my_P = null;
-  view_num = my_view; // This is the view number we will send in MERGE message
-  for(const [key, value] in processing)
-  {
-    if(value.length>=2*f+1 && key[1]>=(v_last-n))
-    {
-      my_P = value;
-    }
-    if(state=='normal' && prepared_count>=f+1) // Is check for f+1 PRE-PREPARED really necessary doe?
-    {
-      view_num = my_view+1;
-    }
-  }
-  state = 'merge';
-  isPrepared = false;
-  isPrePrepared = false;
+  // my_P = null;
+  // view_num = my_view; // This is the view number we will send in MERGE message
+  // for(const [key, value] in processing)
+  // {
+  //   if(value.length>=2*f+1 && key[1]>=(v_last-n))
+  //   {
+  //     my_P = value;
+  //   }
+  //   if(state=='normal' && prepared_count>=f+1) // Is check for f+1 PRE-PREPARED really necessary doe?
+  //   {
+  //     view_num = my_view+1;
+  //   }
+  // }
+  // state = 'merge';
+  // isPrepared = false;
+  // isPrePrepared = false;
+  console.log("In Expire")
+  v_last = my_view;
   my_view++;
-  restartTimer();
+  if((my_view%n==host_id) && (unordered.length!=0)){
+    console.log("Before preprepare");
+    sendPrePrepare();
+  }
+  timer.restart();
+  // startTimer();
 }
 
 function exec(request){
@@ -242,7 +302,8 @@ function RequestHandler(msg_tuple){
   }
   // Make sure timer is not started multiple times
 
-  startTimer();
+  // startTimer();
+  
 }
 
 function PrePrepareHandler(msg_tuple){
@@ -349,7 +410,7 @@ function CommitHandler(msg_tuple){
     commit_count++;
     if(commit_count >= 2*f+1 && reply_sent==false){
       if(state=='normal'){
-        stopTimer();
+        timer.restart()
       }
       request = null;
       // console.log(`Processing is ${processing}`);
@@ -592,6 +653,11 @@ const server = net.createServer(socket => {
   // });
 
   socket.on('data', data => {
+    if(timerStarted==false){
+      console.log("Hi");
+      timer.start();
+      timerStarted=true;
+    }
     buffer += data.toString();
     let delimIndex;
     while ((delimIndex = buffer.indexOf('\0')) !== -1) {
